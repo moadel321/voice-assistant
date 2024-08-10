@@ -13,11 +13,11 @@ from bidi.algorithm import get_display
 import time
 
 # TODO: Replace with your actual OpenAI API key
-openai_api_key = "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"
+openai_api_key = ""
 client = OpenAI(api_key=openai_api_key)
 
 # TODO: Replace with your actual Hugging Face API token
-HUGGINGFACE_API_TOKEN = "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"
+HUGGINGFACE_API_TOKEN = ""
 
 # Hugging Face inference endpoint URL
 HUGGINGFACE_ENDPOINT = "https://ejeic7mu20f8nbac.us-east-1.aws.endpoints.huggingface.cloud"
