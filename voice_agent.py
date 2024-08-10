@@ -17,14 +17,6 @@ import os
 # Load environment variables from .env file
 load_dotenv()
 
-# Get API keys from environment variables
-openai_api_key = os.getenv("OPENAI_API_KEY")
-client = OpenAI(api_key=openai_api_key)
-
-HUGGINGFACE_API_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN")
-
-# Hugging Face inference endpoint URL
-HUGGINGFACE_ENDPOINT = "https://ejeic7mu20f8nbac.us-east-1.aws.endpoint.cloud"
 
 # Audio recording parameters
 SAMPLE_RATE = 16000
