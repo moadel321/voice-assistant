@@ -1,0 +1,10 @@
+# Ignore the .env file
+.env
+
+# Ignore all log files
+*.log
+
+
+
+# Ignore the cache directory
+__pycache__/
