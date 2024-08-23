@@ -6,12 +6,13 @@ This project implements a voice assistant that can transcribe speech to text usi
 - Audio recording using the spacebar as a push-to-talk mechanism
 - Speech-to-text transcription using a Hugging Face inference endpoint
 - Text generation using OpenAI's GPT-4
+- Text-to-speech output for GPT-4 responses using OpenAI's TTS API
 - Proper display of Arabic text (right-to-left)
 - Latency logging for performance analysis
 
 ## Requirements
 - Python 3.x
-- Required Python packages: (list all required packages)
+- Required Python packages: openai, sounddevice, numpy, requests, soundfile, arabic-reshaper, python-bidi, python-dotenv, pydub
 
 ## Setup
 1. Clone this repository

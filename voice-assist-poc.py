@@ -14,6 +14,10 @@ import time
 from dotenv import load_dotenv
 import os
 
+import io
+from pydub import AudioSegment
+from pydub.playback import play
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -24,7 +28,7 @@ client = OpenAI(api_key=openai_api_key)
 HUGGINGFACE_API_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN")
 
 # Hugging Face inference endpoint URL
-HUGGINGFACE_ENDPOINT = "https://ejeic7mu20f8nbac.us-east-1.aws.endpoint.cloud"
+HUGGINGFACE_ENDPOINT = "https://mrholocg8pxhkacd.us-east-1.aws.endpoints.huggingface.cloud"
 
 # Audio recording parameters
 SAMPLE_RATE = 16000
@@ -58,6 +62,7 @@ def audio_callback(indata, frames, time, status):
 def record_audio():
     """Record audio while spacebar is pressed."""
     print("Press and hold the spacebar to speak...")
+    audio_queue.queue.clear()  # Clear the queue before recording
     with sd.InputStream(samplerate=SAMPLE_RATE, channels=CHANNELS, callback=audio_callback):
         while True:
             if keyboard.is_pressed('space'):
@@ -66,12 +71,8 @@ def record_audio():
                     sd.sleep(100)
                 return np.concatenate(list(audio_queue.queue))
 
-import json
-
 def transcribe_audio(audio):
     """Transcribe audio using Hugging Face dedicated inference endpoint."""
-    start_time = time.time()
-    
     headers = {
         "Accept": "application/json",
         "Authorization": f"Bearer {HUGGINGFACE_API_TOKEN}",
@@ -91,14 +92,18 @@ def transcribe_audio(audio):
     flac_data = buffer.getvalue()
     
     try:
+        start_time = time.time()
         response = requests.post(HUGGINGFACE_ENDPOINT, headers=headers, data=flac_data)
-        response.raise_for_status()
-        transcription = response.json()["text"]
         end_time = time.time()
+        response.raise_for_status()
+        response_json = response.json()
+        transcription = response_json.get("text", None)
+        if transcription is None:
+            raise ValueError("Transcription key 'text' not found in response.")
         latency = (end_time - start_time) * 1000  # Convert to milliseconds
-        print(f"Transcription latency: {latency:.2f} ms")
+        print(f"Transcription API latency: {latency:.2f} ms")
         return transcription
-    except requests.exceptions.RequestException as e:
+    except (requests.exceptions.RequestException, ValueError) as e:
         print(f"Error: {e}")
         if response.text:
             print(f"Response content: {response.text}")
@@ -106,11 +111,10 @@ def transcribe_audio(audio):
 
 def get_gpt4_response(transcription):
     """Get response from GPT-4 using OpenAI's API."""
-    start_time = time.time()
-    
     if transcription is None:
         return "I'm sorry, I couldn't transcribe the audio. Could you please try again?"
     
+    start_time = time.time()
     response = client.chat.completions.create(
         model="gpt-4",
         messages=[
@@ -118,13 +122,38 @@ def get_gpt4_response(transcription):
             {"role": "user", "content": transcription}
         ]
     )
+    end_time = time.time()
     gpt4_response = response.choices[0].message.content
     
-    end_time = time.time()
     latency = (end_time - start_time) * 1000  # Convert to milliseconds
-    print(f"GPT-4 response latency: {latency:.2f} ms")
+    print(f"GPT-4 API latency: {latency:.2f} ms")
     
     return gpt4_response
+
+def text_to_speech(text):
+    """Convert text to speech using OpenAI's TTS API."""
+    try:
+        start_time = time.time()
+        response = client.audio.speech.create(
+            model="tts-1",
+            voice="alloy",
+            input=text
+        )
+        end_time = time.time()
+        
+        # Save the audio to a BytesIO object
+        audio_data = io.BytesIO(response.content)
+        
+        # Load the audio using pydub
+        audio = AudioSegment.from_mp3(audio_data)
+        
+        # Play the audio
+        play(audio)
+        
+        latency = (end_time - start_time) * 1000  # Convert to milliseconds
+        print(f"Text-to-Speech API latency: {latency:.2f} ms")
+    except Exception as e:
+        print(f"Error in text-to-speech conversion: {e}")
 
 def main():
     while True:
@@ -143,10 +172,14 @@ def main():
         gpt4_response = get_gpt4_response(transcription)
         print(f"GPT-4 Response: {display_arabic(gpt4_response)}")
 
+        # Convert GPT-4 response to speech
+        print("Converting response to speech...")
+        text_to_speech(gpt4_response)
+
         # Calculate and print overall latency
         overall_end_time = time.time()
         overall_latency = (overall_end_time - overall_start_time) * 1000  # Convert to milliseconds
-        print(f"Overall latency (transcription to GPT-4 response): {overall_latency:.2f} ms")
+        print(f"Overall latency (transcription to speech output): {overall_latency:.2f} ms")
 
         print("\nPress spacebar to speak again, or 'q' to quit.")
         if keyboard.read_key() == 'q':
