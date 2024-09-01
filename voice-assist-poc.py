@@ -1,201 +1,238 @@
+import time
+import logging
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+start_time = time.time()
+
+logging.info("Starting imports...")
 import keyboard
 import sounddevice as sd
 import numpy as np
-from openai import OpenAI
 import queue
-import threading
 import requests
 import io
 import soundfile as sf
-import json
 import arabic_reshaper
+logging.info("Imported basic libraries")
 from bidi.algorithm import get_display
 import time
 from dotenv import load_dotenv
 import os
 from pydub import AudioSegment
 import csv
+logging.info("Imported additional libraries")
 from datetime import datetime
+from typing import IO
+from io import BytesIO
+logging.info("Imported datetime and IO libraries")
+from elevenlabs import VoiceSettings
+from elevenlabs.client import ElevenLabs
+logging.info("Imported ElevenLabs libraries")
+from openai import OpenAI
+logging.info("Imported OpenAI library")
+import sys
+import codecs
+logging.info("Imports completed in %.2f seconds", time.time() - start_time)
 
-# Load environment variables from .env file
+logging.info("Setting up stdout encoding...")
+sys.stdout = codecs.getwriter("utf-8")(sys.stdout.detach())
+logging.info("Stdout encoding set up")
+
+logging.info("Loading environment variables...")
 load_dotenv()
+logging.info("Environment variables loaded")
 
-# Set the path to the FFmpeg executables
-ffmpeg_path = r"C:\ProgramData\chocolatey\lib\ffmpeg-full\tools\ffmpeg\bin"  # Replace with your actual path
-os.environ["PATH"] += os.pathsep + ffmpeg_path
+logging.info("Initializing OpenAI client...")
+openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+logging.info("OpenAI client initialized")
 
-# Get API keys from environment variables
-openai_api_key = os.getenv("OPENAI_API_KEY")
-client = OpenAI(api_key=openai_api_key)
+logging.info("Initializing ElevenLabs client...")
+elevenlabs_client = ElevenLabs(api_key=os.getenv("ELEVENLABS_API_KEY"))
+logging.info("ElevenLabs client initialized")
 
+logging.info("Setting up constants...")
 HUGGINGFACE_API_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN")
-
-# Hugging Face inference endpoint URL
 HUGGINGFACE_ENDPOINT = "https://mrholocg8pxhkacd.us-east-1.aws.endpoints.huggingface.cloud"
-
-# Audio recording parameters
+ELEVENLABS_VOICE_ID = "Xb7hH8MSUJpSbSDYk0k2"
 SAMPLE_RATE = 16000
 CHANNELS = 1
+logging.info("Constants set up")
 
-# Add this class for JSON serialization of numpy arrays
-class NumpyEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        return json.JSONEncoder.default(self, obj)
-
-# Initialize a queue for audio data
+logging.info("Initializing audio queue...")
 audio_queue = queue.Queue()
+logging.info("Audio queue initialized")
 
 def measure_latency(func):
     def wrapper(*args, **kwargs):
+        logging.info(f"Starting {func.__name__}")
         start_time = time.time()
         result = func(*args, **kwargs)
         end_time = time.time()
         latency = (end_time - start_time) * 1000  # Convert to milliseconds
+        logging.info(f"Finished {func.__name__} in {latency:.2f} ms")
         return result, latency
     return wrapper
 
 def display_arabic(text):
+    logging.info("Displaying Arabic text")
     try:
         reshaped_text = arabic_reshaper.reshape(text)
         bidi_text = get_display(reshaped_text)
+        logging.info("Arabic text displayed successfully")
         return bidi_text
     except Exception as e:
-        print(f"Error reshaping text: {e}")
-        return text  # Return original text if reshaping fails
+        logging.error(f"Error reshaping text: {e}")
+        return text
 
 def audio_callback(indata, frames, time, status):
-    """This is called (from a separate thread) for each audio block."""
     if status:
-        print(status, file=sys.stderr)
+        logging.warning(f"Audio callback status: {status}")
     audio_queue.put(indata.copy())
 
 def record_audio():
-    """Record audio while spacebar is pressed."""
+    logging.info("Starting audio recording")
     print("Press and hold the spacebar to speak...")
-    audio_queue.queue.clear()  # Clear the queue before recording
+    audio_queue.queue.clear()
     with sd.InputStream(samplerate=SAMPLE_RATE, channels=CHANNELS, callback=audio_callback):
         while True:
             if keyboard.is_pressed('space'):
+                logging.info("Spacebar pressed, recording started")
                 print("Recording... Release spacebar to stop.")
                 while keyboard.is_pressed('space'):
                     sd.sleep(100)
+                logging.info("Spacebar released, recording stopped")
                 return np.concatenate(list(audio_queue.queue))
 
 @measure_latency
 def transcribe_audio(audio):
-    """Transcribe audio using Hugging Face dedicated inference endpoint."""
+    logging.info("Transcribing audio")
     headers = {
         "Accept": "application/json",
         "Authorization": f"Bearer {HUGGINGFACE_API_TOKEN}",
         "Content-Type": "audio/flac"
     }
     
-    # Ensure audio is a numpy array
-    if not isinstance(audio, np.ndarray):
-        audio = np.frombuffer(audio, dtype=np.float32)
-    
-    # Normalize audio to float32 range [-1, 1]
+    audio = np.frombuffer(audio, dtype=np.float32) if not isinstance(audio, np.ndarray) else audio
     audio = audio.astype(np.float32) / np.max(np.abs(audio))
     
-    # Convert audio to FLAC format
     buffer = io.BytesIO()
     sf.write(buffer, audio, SAMPLE_RATE, format='flac')
     flac_data = buffer.getvalue()
     
     try:
+        logging.info("Sending request to Hugging Face API")
         response = requests.post(HUGGINGFACE_ENDPOINT, headers=headers, data=flac_data)
         response.raise_for_status()
-        response_json = response.json()
-        transcription = response_json.get("text", None)
-        if transcription is None:
-            raise ValueError("Transcription key 'text' not found in response.")
-        return transcription
-    except (requests.exceptions.RequestException, ValueError) as e:
-        print(f"Error: {e}")
-        if response.text:
-            print(f"Response content: {response.text}")
+        logging.info("Received response from Hugging Face API")
+        return response.json().get("text")
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Error in transcription: {e}")
         return None
 
 @measure_latency
-def get_gpt4_response(transcription):
-    """Get response from GPT-4 using OpenAI's API."""
+def get_llm_response(transcription):
+    logging.info("Getting LLM response")
     if transcription is None:
+        logging.warning("Transcription is None, returning error message")
         return "I'm sorry, I couldn't transcribe the audio. Could you please try again?"
     
-    response = client.chat.completions.create(
-        model="gpt-4",
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": transcription}
-        ]
-    )
-    
-    return response.choices[0].message.content
+    try:
+        logging.info("Sending request to OpenAI API")
+        response = openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant who speaks only in Egyptian Arabic and no other language."},
+                {"role": "user", "content": transcription}
+            ],
+            temperature=0.3,
+            max_tokens=150
+        )
+        logging.info("Received response from OpenAI API")
+        return response.choices[0].message.content
+    except Exception as e:
+        logging.error(f"Error in LLM response: {e}")
+        return "I'm sorry, I encountered an error. Could you please try again?"
 
 @measure_latency
-def text_to_speech(text):
-    """Convert text to speech using OpenAI's TTS API and play it directly."""
+def text_to_speech(text: str) -> IO[bytes]:
+    logging.info("Converting text to speech")
     try:
-        response = client.audio.speech.create(
-            model="tts-1",
-            voice="alloy",
-            input=text
+        logging.info("Sending request to ElevenLabs API")
+        response = elevenlabs_client.text_to_speech.convert(
+            voice_id=ELEVENLABS_VOICE_ID,
+            output_format="mp3_22050_32",
+            text=text,
+            language_code='ar',
+            model_id="eleven_turbo_v2_5",
+            voice_settings=VoiceSettings(
+                stability=0.0,
+                similarity_boost=1.0,
+                style=0.0,
+                use_speaker_boost=True,
+            ),
         )
-        
-        # Load MP3 data into an AudioSegment
-        audio_segment = AudioSegment.from_mp3(io.BytesIO(response.content))
-        
-        # Convert to raw PCM audio data
-        audio_data = np.array(audio_segment.get_array_of_samples())
-        
-        # Play the audio
-        sd.play(audio_data, samplerate=audio_segment.frame_rate)
-        sd.wait()  # Wait until the audio is finished playing
-        
-        return "Audio played successfully"
+        logging.info("Received response from ElevenLabs API")
+
+        audio_stream = BytesIO()
+        for chunk in response:
+            if chunk:
+                audio_stream.write(chunk)
+        audio_stream.seek(0)
+
+        logging.info("Playing audio")
+        audio_segment = AudioSegment.from_mp3(audio_stream)
+        audio_array = np.array(audio_segment.get_array_of_samples())
+        sd.play(audio_array, samplerate=audio_segment.frame_rate)
+        sd.wait()
+        logging.info("Audio playback completed")
+
+        return audio_stream
     except Exception as e:
-        print(f"Error in text-to-speech conversion: {e}")
+        logging.error(f"Error in text-to-speech conversion: {e}")
         return None
 
-def write_to_csv(data, filename="latency_log.csv"):
-    fieldnames = ["timestamp", "turn", "transcription_latency", "llm_latency", "tts_latency", "total_latency", "highest_latency"]
+def write_to_csv(data, filename="voice_assistant_log.csv"):
+    logging.info(f"Writing data to CSV file: {filename}")
+    fieldnames = [
+        "timestamp", "turn", "transcription", "llm_response", 
+        "transcription_latency", "llm_latency", "tts_latency", 
+        "total_latency", "highest_latency"
+    ]
     file_exists = os.path.isfile(filename)
     
-    with open(filename, "a", newline="") as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        if not file_exists:
-            writer.writeheader()
-        writer.writerow(data)
+    try:
+        with open(filename, "a", newline="", encoding="utf-8") as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(data)
+        logging.info("Data written to CSV successfully")
+    except Exception as e:
+        logging.error(f"Error writing to CSV: {e}")
 
 def main():
+    logging.info("Starting main function")
     turn = 0
     while True:
         turn += 1
-        # Record audio
+        logging.info(f"Starting turn {turn}")
         audio_data = record_audio()
-        print("Audio recorded. Transcribing...")
+        logging.info("Audio recorded")
 
-        # Measure overall latency
         overall_start_time = time.time()
 
-        # Transcribe audio
         transcription, transcription_latency = transcribe_audio(audio_data)
-        print(f"Transcription: {display_arabic(transcription)}")
+        logging.info(f"Transcription: {display_arabic(transcription)}")
 
-        # Get GPT-4 response
-        gpt4_response, llm_latency = get_gpt4_response(transcription)
-        print(f"GPT-4 Response: {display_arabic(gpt4_response)}")
+        llm_response, llm_latency = get_llm_response(transcription)
+        logging.info(f"LLM Response: {display_arabic(llm_response).encode('utf-8').decode('utf-8')}")
+        
+        logging.info("Converting response to speech")
+        tts_result, tts_latency = text_to_speech(llm_response)
 
-        # Convert GPT-4 response to speech
-        print("Converting response to speech...")
-        tts_result, tts_latency = text_to_speech(gpt4_response)
+        overall_latency = (time.time() - overall_start_time) * 1000
 
-        # Calculate overall latency
-        overall_latency = (time.time() - overall_start_time) * 1000  # Convert to milliseconds
-
-        # Determine which API call took the most latency
         latencies = {
             "Transcription": transcription_latency,
             "LLM": llm_latency,
@@ -203,10 +240,11 @@ def main():
         }
         highest_latency = max(latencies, key=latencies.get)
 
-        # Prepare data for CSV
         data = {
             "timestamp": datetime.now().isoformat(),
             "turn": turn,
+            "transcription": transcription,
+            "llm_response": llm_response,
             "transcription_latency": transcription_latency,
             "llm_latency": llm_latency,
             "tts_latency": tts_latency,
@@ -214,15 +252,19 @@ def main():
             "highest_latency": highest_latency
         }
 
-        # Write to CSV
         write_to_csv(data)
 
-        print(f"Overall latency: {overall_latency:.2f} ms")
-        print(f"Highest latency: {highest_latency} ({latencies[highest_latency]:.2f} ms)")
+        logging.info(f"Overall latency: {overall_latency:.2f} ms")
+        logging.info(f"Highest latency: {highest_latency} ({latencies[highest_latency]:.2f} ms)")
 
         print("\nPress spacebar to speak again, or 'q' to quit.")
         if keyboard.read_key() == 'q':
+            logging.info("User chose to quit")
             break
 
+    logging.info("Main function completed")
+
 if __name__ == "__main__":
+    logging.info("Script started")
     main()
+    logging.info("Script completed")
