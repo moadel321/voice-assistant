@@ -1,9 +1,7 @@
 import keyboard
 import sounddevice as sd
 import numpy as np
-from openai import OpenAI
 import queue
-import threading
 import requests
 import io
 import soundfile as sf
@@ -16,33 +14,34 @@ import os
 from pydub import AudioSegment
 import csv
 from datetime import datetime
+from typing import IO
+from io import BytesIO
+from elevenlabs import VoiceSettings
+from elevenlabs.client import ElevenLabs
 
 # Load environment variables from .env file
 load_dotenv()
 
-# Set the path to the FFmpeg executables
-ffmpeg_path = r"C:\ProgramData\chocolatey\lib\ffmpeg-full\tools\ffmpeg\bin"  # Replace with your actual path
-os.environ["PATH"] += os.pathsep + ffmpeg_path
-
 # Get API keys from environment variables
-openai_api_key = os.getenv("OPENAI_API_KEY")
-client = OpenAI(api_key=openai_api_key)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 
-HUGGINGFACE_API_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN")
+# Initialize ElevenLabs client
+client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
 
 # Hugging Face inference endpoint URL
+HUGGINGFACE_API_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN")
 HUGGINGFACE_ENDPOINT = "https://mrholocg8pxhkacd.us-east-1.aws.endpoints.huggingface.cloud"
+
+# Groq API URL
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+# ElevenLabs voice ID
+ELEVENLABS_VOICE_ID = "Xb7hH8MSUJpSbSDYk0k2"
 
 # Audio recording parameters
 SAMPLE_RATE = 16000
 CHANNELS = 1
-
-# Add this class for JSON serialization of numpy arrays
-class NumpyEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        return json.JSONEncoder.default(self, obj)
 
 # Initialize a queue for audio data
 audio_queue = queue.Queue()
@@ -119,42 +118,65 @@ def transcribe_audio(audio):
         return None
 
 @measure_latency
-def get_gpt4_response(transcription):
-    """Get response from GPT-4 using OpenAI's API."""
+def get_llm_response(transcription):
+    """Get response from Groq's llama3-8b-8192 model."""
     if transcription is None:
         return "I'm sorry, I couldn't transcribe the audio. Could you please try again?"
     
-    response = client.chat.completions.create(
-        model="gpt-4",
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant."},
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    data = {
+        "model": "llama3-8b-8192",
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant. who speaks only in Egyptian arabic and no other language"},
             {"role": "user", "content": transcription}
         ]
-    )
+    }
     
-    return response.choices[0].message.content
+    response = requests.post(GROQ_API_URL, headers=headers, json=data)
+    response.raise_for_status()
+    
+    return response.json()['choices'][0]['message']['content']
 
 @measure_latency
-def text_to_speech(text):
-    """Convert text to speech using OpenAI's TTS API and play it directly."""
+def text_to_speech(text: str) -> IO[bytes]:
+    """Convert text to speech using ElevenLabs' API."""
     try:
-        response = client.audio.speech.create(
-            model="tts-1",
-            voice="alloy",
-            input=text
+        # Perform the text-to-speech conversion
+        response = client.text_to_speech.convert(
+            voice_id=ELEVENLABS_VOICE_ID,
+            output_format="mp3_22050_32",
+            text=text,
+            model_id="eleven_multilingual_v2",
+            voice_settings=VoiceSettings(
+                stability=0.0,
+                similarity_boost=1.0,
+                style=0.0,
+                use_speaker_boost=True,
+            ),
         )
-        
-        # Load MP3 data into an AudioSegment
-        audio_segment = AudioSegment.from_mp3(io.BytesIO(response.content))
-        
-        # Convert to raw PCM audio data
-        audio_data = np.array(audio_segment.get_array_of_samples())
-        
+
+        # Create a BytesIO object to hold the audio data in memory
+        audio_stream = BytesIO()
+
+        # Write each chunk of audio data to the stream
+        for chunk in response:
+            if chunk:
+                audio_stream.write(chunk)
+
+        # Reset stream position to the beginning
+        audio_stream.seek(0)
+
         # Play the audio
-        sd.play(audio_data, samplerate=audio_segment.frame_rate)
+        audio_segment = AudioSegment.from_mp3(audio_stream)
+        audio_array = np.array(audio_segment.get_array_of_samples())
+        sd.play(audio_array, samplerate=audio_segment.frame_rate)
         sd.wait()  # Wait until the audio is finished playing
-        
-        return "Audio played successfully"
+
+        return audio_stream
     except Exception as e:
         print(f"Error in text-to-speech conversion: {e}")
         return None
@@ -164,7 +186,7 @@ def write_to_csv(data, filename="latency_log.csv"):
     file_exists = os.path.isfile(filename)
     
     with open(filename, "a", newline="") as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames, delimiter=',')
         if not file_exists:
             writer.writeheader()
         writer.writerow(data)
@@ -184,13 +206,13 @@ def main():
         transcription, transcription_latency = transcribe_audio(audio_data)
         print(f"Transcription: {display_arabic(transcription)}")
 
-        # Get GPT-4 response
-        gpt4_response, llm_latency = get_gpt4_response(transcription)
-        print(f"GPT-4 Response: {display_arabic(gpt4_response)}")
+        # Get LLM response
+        llm_response, llm_latency = get_llm_response(transcription)
+        print(f"LLM Response: {display_arabic(llm_response)}")
 
-        # Convert GPT-4 response to speech
+        # Convert LLM response to speech
         print("Converting response to speech...")
-        tts_result, tts_latency = text_to_speech(gpt4_response)
+        tts_result, tts_latency = text_to_speech(llm_response)
 
         # Calculate overall latency
         overall_latency = (time.time() - overall_start_time) * 1000  # Convert to milliseconds
