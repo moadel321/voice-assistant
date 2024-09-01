@@ -31,7 +31,7 @@ client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
 
 # Hugging Face inference endpoint URL
 HUGGINGFACE_API_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN")
-HUGGINGFACE_ENDPOINT = "https://mrholocg8pxhkacd.us-east-1.aws.endpoints.huggingface.cloud"
+HUGGINGFACE_ENDPOINT = "https://dlsvhs65zqcznsh2.us-east-1.aws.endpoints.huggingface.cloud"
 
 # Groq API URL
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -129,9 +129,9 @@ def get_llm_response(transcription):
     }
     
     data = {
-        "model": "llama3-8b-8192",
+        "model": "gemma2-9b-it",
         "messages": [
-            {"role": "system", "content": "You are a helpful assistant. who speaks only in Egyptian arabic and no other language"},
+            {"role": "system", "content": "You are a helpful assistant. who speaks only in Egyptian arabic and no other language. Do not output "},
             {"role": "user", "content": transcription}
         ]
     }
@@ -150,7 +150,8 @@ def text_to_speech(text: str) -> IO[bytes]:
             voice_id=ELEVENLABS_VOICE_ID,
             output_format="mp3_22050_32",
             text=text,
-            model_id="eleven_multilingual_v2",
+            language_code='ar',
+            model_id="eleven_turbo_v2_5",
             voice_settings=VoiceSettings(
                 stability=0.0,
                 similarity_boost=1.0,
@@ -181,15 +182,20 @@ def text_to_speech(text: str) -> IO[bytes]:
         print(f"Error in text-to-speech conversion: {e}")
         return None
 
-def write_to_csv(data, filename="latency_log.csv"):
-    fieldnames = ["timestamp", "turn", "transcription_latency", "llm_latency", "tts_latency", "total_latency", "highest_latency"]
+def write_to_csv(data, filename="voice_assistant_log.csv"):
+    fieldnames = [
+        "timestamp", "turn", "transcription", "llm_response", 
+        "transcription_latency", "llm_latency", "tts_latency", 
+        "total_latency", "highest_latency"
+    ]
     file_exists = os.path.isfile(filename)
     
-    with open(filename, "a", newline="") as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames, delimiter=',')
+    with io.open(filename, "a", newline="", encoding="utf-8") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         if not file_exists:
             writer.writeheader()
         writer.writerow(data)
+
 
 def main():
     turn = 0
@@ -229,6 +235,8 @@ def main():
         data = {
             "timestamp": datetime.now().isoformat(),
             "turn": turn,
+            "transcription": transcription,
+            "llm_response": llm_response,
             "transcription_latency": transcription_latency,
             "llm_latency": llm_latency,
             "tts_latency": tts_latency,
