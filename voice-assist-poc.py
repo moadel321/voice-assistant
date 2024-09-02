@@ -1,43 +1,32 @@
 import time
 import logging
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-start_time = time.time()
-
-logging.info("Starting imports...")
-import keyboard
-import sounddevice as sd
 import numpy as np
 import queue
 import requests
 import io
 import soundfile as sf
 import arabic_reshaper
-logging.info("Imported basic libraries")
 from bidi.algorithm import get_display
-import time
 from dotenv import load_dotenv
 import os
 from pydub import AudioSegment
 import csv
-logging.info("Imported additional libraries")
 from datetime import datetime
 from typing import IO
 from io import BytesIO
-logging.info("Imported datetime and IO libraries")
 from elevenlabs import VoiceSettings
 from elevenlabs.client import ElevenLabs
-logging.info("Imported ElevenLabs libraries")
 from openai import OpenAI
-logging.info("Imported OpenAI library")
 import sys
 import codecs
 from typing import List, Dict
+import torch
+import sounddevice as sd
+from silero_vad import get_speech_timestamps
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-conversation_history: List[Dict[str, str]] = []
-
+start_time = time.time()
 
 logging.info("Imports completed in %.2f seconds", time.time() - start_time)
 
@@ -69,6 +58,12 @@ logging.info("Initializing audio queue...")
 audio_queue = queue.Queue()
 logging.info("Audio queue initialized")
 
+logging.info("Loading Silero VAD model...")
+vad_model, utils = torch.hub.load(repo_or_dir='snakers4/silero-vad', model='silero_vad')
+logging.info("Silero VAD model loaded")
+
+conversation_history: List[Dict[str, str]] = []
+
 def measure_latency(func):
     def wrapper(*args, **kwargs):
         logging.info(f"Starting {func.__name__}")
@@ -96,19 +91,39 @@ def audio_callback(indata, frames, time, status):
         logging.warning(f"Audio callback status: {status}")
     audio_queue.put(indata.copy())
 
-def record_audio():
-    logging.info("Starting audio recording")
-    print("Press and hold the spacebar to speak...")
+def record_audio_with_vad():
+    logging.info("Starting audio recording with VAD")
+    print("Listening... Speak when ready.")
     audio_queue.queue.clear()
+    
     with sd.InputStream(samplerate=SAMPLE_RATE, channels=CHANNELS, callback=audio_callback):
+        audio_data = []
+        silence_duration = 0
+        speech_detected = False
+        
         while True:
-            if keyboard.is_pressed('space'):
-                logging.info("Spacebar pressed, recording started")
-                print("Recording... Release spacebar to stop.")
-                while keyboard.is_pressed('space'):
-                    sd.sleep(100)
-                logging.info("Spacebar released, recording stopped")
-                return np.concatenate(list(audio_queue.queue))
+            if not audio_queue.empty():
+                chunk = audio_queue.get()
+                audio_data.extend(chunk.flatten())
+                
+                if len(audio_data) > SAMPLE_RATE:  # Process in 1-second chunks
+                    audio_tensor = torch.tensor(audio_data[-SAMPLE_RATE:])
+                    speech_timestamps = get_speech_timestamps(audio_tensor, vad_model, sampling_rate=SAMPLE_RATE)
+                    
+                    if speech_timestamps and not speech_detected:
+                        logging.info("Speech detected, recording started")
+                        print("Recording... Please speak.")
+                        speech_detected = True
+                        silence_duration = 0
+                    elif not speech_timestamps and speech_detected:
+                        silence_duration += 1
+                        if silence_duration > 2:  # Stop after 2 seconds of silence
+                            logging.info("Recording stopped")
+                            return np.array(audio_data, dtype=np.float32)
+                    else:
+                        silence_duration = 0
+            
+            sd.sleep(100)
 
 @measure_latency
 def transcribe_audio(audio):
@@ -173,6 +188,7 @@ def get_llm_response(transcription: str) -> str:
     except Exception as e:
         logging.error(f"Error in LLM response: {e}")
         return "I'm sorry, I encountered an error. Could you please try again?"
+
 @measure_latency
 def text_to_speech(text: str) -> IO[bytes]:
     logging.info("Converting text to speech")
@@ -182,7 +198,7 @@ def text_to_speech(text: str) -> IO[bytes]:
             voice_id=ELEVENLABS_VOICE_ID,
             output_format="mp3_22050_32",
             text=text,
-            language_code='ar',
+            #language_code='ar',
             model_id="eleven_turbo_v2_5",
             voice_settings=VoiceSettings(
                 stability=0.5,
@@ -244,7 +260,6 @@ def is_goodbye(text: str) -> bool:
     ]
     return any(phrase in text.lower() for phrase in goodbye_phrases)
 
-
 @measure_latency
 def get_initial_greeting() -> str:
     global conversation_history
@@ -269,7 +284,6 @@ def get_initial_greeting() -> str:
         logging.error(f"Error getting initial greeting: {e}")
         return "أهلا بيك في Sphinx تورز! إزاي أقدر أساعدك النهاردة؟"  # Fallback
 
-
 def main():
     global conversation_history
     logging.info("Starting main function")
@@ -284,8 +298,8 @@ def main():
     while True:
         turn += 1
         logging.info(f"Starting turn {turn}")
-        print("\nPress spacebar to speak...")
-        audio_data = record_audio()
+        print("\nListening for speech...")
+        audio_data = record_audio_with_vad()
         logging.info("Audio recorded")
 
         overall_start_time = time.time()
