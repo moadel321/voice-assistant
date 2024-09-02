@@ -33,6 +33,12 @@ from openai import OpenAI
 logging.info("Imported OpenAI library")
 import sys
 import codecs
+from typing import List, Dict
+
+
+conversation_history: List[Dict[str, str]] = []
+
+
 logging.info("Imports completed in %.2f seconds", time.time() - start_time)
 
 logging.info("Setting up stdout encoding...")
@@ -131,29 +137,42 @@ def transcribe_audio(audio):
         return None
 
 @measure_latency
-def get_llm_response(transcription):
+def get_llm_response(transcription: str) -> str:
+    global conversation_history
     logging.info("Getting LLM response")
     if transcription is None:
         logging.warning("Transcription is None, returning error message")
         return "I'm sorry, I couldn't transcribe the audio. Could you please try again?"
     
+    conversation_history.append({"role": "user", "content": transcription})
+    
+    system_message = """إنت مساعد صوتي لشركة سفينكس تورز، وهي وكالة سفر موجودة في القاهرة، مصر. الشركة متخصصة في تنظيم الرحلات والإجازات، وبتقدم تجارب سفر مخصصة للعملاء. سفينكس تورز شغالة من الساعة 9 الصبح لحد الساعة 6 بليل من الاثنين للسبت، ومقفولين يوم الأحد. وظيفتك الأساسية هي الرد على الأسئلة عن باقات السفر وحجز الرحلات. لما الcaller يكون عاوز يحجز رحلة، هدفك هو جمع كل المعلومات اللازمة بشكل فعال مع الحفاظ على نبرة ودية وجذابة:
+1. اسأل عن اسمه بالكامل.
+2. اسأل هو عايز يسافر فين أو أي باقة رحلات مهتم بيها.
+3. اطلب منه مواعيد السفر المفضلة عنده.
+4. أكد على كل التفاصيل مع الcaller، بما في ذلك الوجهة والتواريخ وأي طلبات خاصة.
+5. خلي نبرتك خفيفة ومرحة، وضيف شوية هزار.
+6. استخدم لغة عادية وحوارية. ما تترددش تقول حاجات زي "اممم..."، "طيب..."، أو "يعني" عشان تخلي الكلام طبيعي.
+7. ده حوار صوتي، فخليك مختصر وفي الصميم. ما تطولش في الشرح."""
+
     try:
         logging.info("Sending request to OpenAI API")
         response = openai_client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant who speaks only in Egyptian Arabic and no other language."},
-                {"role": "user", "content": transcription}
+                {"role": "system", "content": system_message},
+                *conversation_history
             ],
-            temperature=0.3,
+            temperature=0.7,
             max_tokens=150
         )
         logging.info("Received response from OpenAI API")
-        return response.choices[0].message.content
+        assistant_response = response.choices[0].message.content
+        conversation_history.append({"role": "assistant", "content": assistant_response})
+        return assistant_response
     except Exception as e:
         logging.error(f"Error in LLM response: {e}")
         return "I'm sorry, I encountered an error. Could you please try again?"
-
 @measure_latency
 def text_to_speech(text: str) -> IO[bytes]:
     logging.info("Converting text to speech")
@@ -206,17 +225,60 @@ def write_to_csv(data, filename="voice_assistant_log.csv"):
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             if not file_exists:
                 writer.writeheader()
-            writer.writerow(data)
+            
+            # Sanitize the data
+            sanitized_data = {
+                k: v.replace('\n', ' ').replace('\r', '') if isinstance(v, str) else v
+                for k, v in data.items()
+            }
+            
+            writer.writerow(sanitized_data)
         logging.info("Data written to CSV successfully")
     except Exception as e:
         logging.error(f"Error writing to CSV: {e}")
 
+
+        
+@measure_latency
+def get_initial_greeting() -> str:
+    global conversation_history
+    logging.info("Getting initial greeting from LLM")
+    
+    system_message = """إنت مساعد صوتي لشركة سفينكس تورز، وهي وكالة سفر موجودة في القاهرة، مصر. الشركة متخصصة في تنظيم الرحلات والإجازات، وبتقدم تجارب سفر مخصصة للعملاء. سفينكس تورز شغالة من الساعة 9 الصبح لحد الساعة 6 بليل من الاثنين للسبت، ومقفولين يوم الأحد. وظيفتك الأساسية هي الرد على الأسئلة عن باقات السفر وحجز الرحلات. قدم ترحيب قصير وودي باللهجة المصرية."""
+    
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": "ابدأ المحادثة بترحيب قصير وودي."}
+            ],
+            temperature=0.7,
+            max_tokens=50
+        )
+        greeting = response.choices[0].message.content
+        conversation_history.append({"role": "assistant", "content": greeting})
+        return greeting
+    except Exception as e:
+        logging.error(f"Error getting initial greeting: {e}")
+        return "أهلا بيك في سفينكس تورز! إزاي أقدر أساعدك النهاردة؟"  # Fallback
+
+
 def main():
+    global conversation_history
     logging.info("Starting main function")
     turn = 0
+    conversation_history = []  # Initialize new conversation
+
+    # Get and play initial greeting
+    initial_greeting, greeting_latency = get_initial_greeting()
+    logging.info(f"Initial Greeting: {display_arabic(initial_greeting)}")
+    tts_result, tts_latency = text_to_speech(initial_greeting)
+
     while True:
         turn += 1
         logging.info(f"Starting turn {turn}")
+        print("\nPress spacebar to speak...")
         audio_data = record_audio()
         logging.info("Audio recorded")
 
@@ -257,12 +319,18 @@ def main():
         logging.info(f"Overall latency: {overall_latency:.2f} ms")
         logging.info(f"Highest latency: {highest_latency} ({latencies[highest_latency]:.2f} ms)")
 
-        print("\nPress spacebar to speak again, or 'q' to quit.")
-        if keyboard.read_key() == 'q':
+        print("\nPress spacebar to speak again, 'r' to reset conversation, or 'q' to quit.")
+        key = keyboard.read_key()
+        if key == 'q':
             logging.info("User chose to quit")
             break
+        elif key == 'r':
+            logging.info("User chose to reset conversation")
+            conversation_history = []
+            print("Conversation reset. Press spacebar to start a new conversation.")
 
     logging.info("Main function completed")
+
 
 if __name__ == "__main__":
     logging.info("Script started")
