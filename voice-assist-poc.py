@@ -146,7 +146,7 @@ def get_llm_response(transcription: str) -> str:
     
     conversation_history.append({"role": "user", "content": transcription})
     
-    system_message = """إنت مساعد صوتي لشركة سفينكس تورز، وهي وكالة سفر موجودة في القاهرة، مصر. الشركة متخصصة في تنظيم الرحلات والإجازات، وبتقدم تجارب سفر مخصصة للعملاء. سفينكس تورز شغالة من الساعة 9 الصبح لحد الساعة 6 بليل من الاثنين للسبت، ومقفولين يوم الأحد. وظيفتك الأساسية هي الرد على الأسئلة عن باقات السفر وحجز الرحلات. لما الcaller يكون عاوز يحجز رحلة، هدفك هو جمع كل المعلومات اللازمة بشكل فعال مع الحفاظ على نبرة ودية وجذابة:
+    system_message = """إنت مساعد صوتي لشركة Sphinx تورز، وهي وكالة سفر موجودة في القاهرة، مصر. الشركة متخصصة في تنظيم الرحلات والإجازات، وبتقدم تجارب سفر مخصصة للعملاء. Sphinx تورز شغالة من الساعة 9 الصبح لحد الساعة 6 بليل من الاثنين للسبت، ومقفولين يوم الأحد. وظيفتك الأساسية هي الرد على الأسئلة عن باقات السفر وحجز الرحلات. لما الcaller يكون عاوز يحجز رحلة، هدفك هو جمع كل المعلومات اللازمة بشكل فعال مع الحفاظ على نبرة ودية وجذابة:
 1. اسأل عن اسمه بالكامل.
 2. اسأل هو عايز يسافر فين أو أي باقة رحلات مهتم بيها.
 3. اطلب منه مواعيد السفر المفضلة عنده.
@@ -163,8 +163,8 @@ def get_llm_response(transcription: str) -> str:
                 {"role": "system", "content": system_message},
                 *conversation_history
             ],
-            temperature=0.7,
-            max_tokens=150
+            temperature=0.3,
+            max_tokens=250
         )
         logging.info("Received response from OpenAI API")
         assistant_response = response.choices[0].message.content
@@ -185,7 +185,7 @@ def text_to_speech(text: str) -> IO[bytes]:
             language_code='ar',
             model_id="eleven_turbo_v2_5",
             voice_settings=VoiceSettings(
-                stability=0.0,
+                stability=0.5,
                 similarity_boost=1.0,
                 style=0.0,
                 use_speaker_boost=True,
@@ -250,7 +250,7 @@ def get_initial_greeting() -> str:
     global conversation_history
     logging.info("Getting initial greeting from LLM")
     
-    system_message = """إنت مساعد صوتي لشركة سفينكس تورز، وهي وكالة سفر موجودة في القاهرة، مصر. الشركة متخصصة في تنظيم الرحلات والإجازات، وبتقدم تجارب سفر مخصصة للعملاء. سفينكس تورز شغالة من الساعة 9 الصبح لحد الساعة 6 بليل من الاثنين للسبت، ومقفولين يوم الأحد. وظيفتك الأساسية هي الرد على الأسئلة عن باقات السفر وحجز الرحلات. قدم ترحيب قصير وودي باللهجة المصرية."""
+    system_message = """إنت مساعد صوتي لشركة Sphinx تورز، وهي وكالة سفر موجودة في القاهرة، مصر. الشركة متخصصة في تنظيم الرحلات والإجازات، وبتقدم تجارب سفر مخصصة للعملاء. Sphinx تورز شغالة من الساعة 9 الصبح لحد الساعة 6 بليل من الاثنين للسبت، ومقفولين يوم الأحد. وظيفتك الأساسية هي الرد على الأسئلة عن باقات السفر وحجز الرحلات. قدم ترحيب قصير وودي باللهجة المصرية."""
     
     try:
         response = openai_client.chat.completions.create(
@@ -267,7 +267,7 @@ def get_initial_greeting() -> str:
         return greeting
     except Exception as e:
         logging.error(f"Error getting initial greeting: {e}")
-        return "أهلا بيك في سفينكس تورز! إزاي أقدر أساعدك النهاردة؟"  # Fallback
+        return "أهلا بيك في Sphinx تورز! إزاي أقدر أساعدك النهاردة؟"  # Fallback
 
 
 def main():
@@ -294,7 +294,7 @@ def main():
         logging.info(f"Transcription: {display_arabic(transcription)}")
 
         if is_goodbye(transcription):
-            goodbye_message = "شكرًا لاستخدامك سفينكس تورز. نتمنى لك يومًا سعيدًا!"
+            goodbye_message = "شكرًا لاستخدامك Sphinx تورز. نتمنى لك يومًا سعيدًا!"
             logging.info(f"Goodbye message: {display_arabic(goodbye_message)}")
             tts_result, tts_latency = text_to_speech(goodbye_message)
             print("Ending conversation. Goodbye!")
