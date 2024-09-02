@@ -237,8 +237,14 @@ def write_to_csv(data, filename="voice_assistant_log.csv"):
     except Exception as e:
         logging.error(f"Error writing to CSV: {e}")
 
+def is_goodbye(text: str) -> bool:
+    goodbye_phrases = [
+        "مع السلامة", "وداعا", "باي", "سلام", "تصبح على خير", "إلى اللقاء",
+        "شكرا", "شكرًا", "خلاص كده"
+    ]
+    return any(phrase in text.lower() for phrase in goodbye_phrases)
 
-        
+
 @measure_latency
 def get_initial_greeting() -> str:
     global conversation_history
@@ -287,6 +293,13 @@ def main():
         transcription, transcription_latency = transcribe_audio(audio_data)
         logging.info(f"Transcription: {display_arabic(transcription)}")
 
+        if is_goodbye(transcription):
+            goodbye_message = "شكرًا لاستخدامك سفينكس تورز. نتمنى لك يومًا سعيدًا!"
+            logging.info(f"Goodbye message: {display_arabic(goodbye_message)}")
+            tts_result, tts_latency = text_to_speech(goodbye_message)
+            print("Ending conversation. Goodbye!")
+            break
+
         llm_response, llm_latency = get_llm_response(transcription)
         logging.info(f"LLM Response: {display_arabic(llm_response).encode('utf-8').decode('utf-8')}")
         
@@ -319,18 +332,7 @@ def main():
         logging.info(f"Overall latency: {overall_latency:.2f} ms")
         logging.info(f"Highest latency: {highest_latency} ({latencies[highest_latency]:.2f} ms)")
 
-        print("\nPress spacebar to speak again, 'r' to reset conversation, or 'q' to quit.")
-        key = keyboard.read_key()
-        if key == 'q':
-            logging.info("User chose to quit")
-            break
-        elif key == 'r':
-            logging.info("User chose to reset conversation")
-            conversation_history = []
-            print("Conversation reset. Press spacebar to start a new conversation.")
-
     logging.info("Main function completed")
-
 
 if __name__ == "__main__":
     logging.info("Script started")
