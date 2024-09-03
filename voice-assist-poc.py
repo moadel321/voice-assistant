@@ -96,6 +96,10 @@ def record_audio_with_vad():
     print("Listening... Speak when ready.")
     audio_queue.queue.clear()
     
+    vad_start_time = time.time()
+    total_processing_time = 0
+    num_chunks_processed = 0
+    
     with sd.InputStream(samplerate=SAMPLE_RATE, channels=CHANNELS, callback=audio_callback):
         audio_data = []
         silence_duration = 0
@@ -103,6 +107,7 @@ def record_audio_with_vad():
         
         while True:
             if not audio_queue.empty():
+                chunk_start_time = time.time()
                 chunk = audio_queue.get()
                 audio_data.extend(chunk.flatten())
                 
@@ -119,11 +124,25 @@ def record_audio_with_vad():
                         silence_duration += 1
                         if silence_duration > 2:  # Stop after 2 seconds of silence
                             logging.info("Recording stopped")
-                            return np.array(audio_data, dtype=np.float32)
+                            break
                     else:
                         silence_duration = 0
+                
+                chunk_end_time = time.time()
+                chunk_processing_time = chunk_end_time - chunk_start_time
+                total_processing_time += chunk_processing_time
+                num_chunks_processed += 1
             
-            sd.sleep(100)
+            sd.sleep(10)  # Small sleep to prevent busy-waiting
+    
+    vad_end_time = time.time()
+    total_vad_time = vad_end_time - vad_start_time
+    avg_chunk_processing_time = total_processing_time / num_chunks_processed if num_chunks_processed > 0 else 0
+    
+    logging.info(f"VAD total time: {total_vad_time:.2f} seconds")
+    logging.info(f"Average chunk processing time: {avg_chunk_processing_time*1000:.2f} ms")
+    
+    return np.array(audio_data, dtype=np.float32), total_vad_time, avg_chunk_processing_time
 
 @measure_latency
 def transcribe_audio(audio):
@@ -299,7 +318,7 @@ def main():
         turn += 1
         logging.info(f"Starting turn {turn}")
         print("\nListening for speech...")
-        audio_data = record_audio_with_vad()
+        audio_data, vad_total_time, vad_avg_chunk_time = record_audio_with_vad()
         logging.info("Audio recorded")
 
         overall_start_time = time.time()
@@ -323,6 +342,8 @@ def main():
         overall_latency = (time.time() - overall_start_time) * 1000
 
         latencies = {
+            "VAD Total": vad_total_time * 1000,  # Convert to ms
+            "VAD Avg Chunk": vad_avg_chunk_time * 1000,  # Convert to ms
             "Transcription": transcription_latency,
             "LLM": llm_latency,
             "Text-to-Speech": tts_latency
@@ -334,6 +355,8 @@ def main():
             "turn": turn,
             "transcription": transcription,
             "llm_response": llm_response,
+            "vad_total_latency": vad_total_time * 1000,
+            "vad_avg_chunk_latency": vad_avg_chunk_time * 1000,
             "transcription_latency": transcription_latency,
             "llm_latency": llm_latency,
             "tts_latency": tts_latency,
