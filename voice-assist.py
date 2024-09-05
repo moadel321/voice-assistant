@@ -48,7 +48,7 @@ logging.info("ElevenLabs client initialized")
 
 logging.info("Setting up constants...")
 HUGGINGFACE_API_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN")
-HUGGINGFACE_ENDPOINT = "https://mrholocg8pxhkacd.us-east-1.aws.endpoints.huggingface.cloud"
+HUGGINGFACE_ENDPOINT = "https://h81g3j4dmqhchvv2.us-east-1.aws.endpoints.huggingface.cloud"
 ELEVENLABS_VOICE_ID = "Xb7hH8MSUJpSbSDYk0k2"
 SAMPLE_RATE = 16000
 CHANNELS = 1
@@ -57,6 +57,7 @@ logging.info("Constants set up")
 logging.info("Initializing audio queue...")
 audio_queue = queue.Queue()
 logging.info("Audio queue initialized")
+
 
 logging.info("Loading Silero VAD model...")
 vad_model, utils = torch.hub.load(repo_or_dir='snakers4/silero-vad', model='silero_vad')
@@ -251,7 +252,8 @@ def write_to_csv(data, filename="voice_assistant_log.csv"):
     fieldnames = [
         "timestamp", "turn", "transcription", "llm_response", 
         "transcription_latency", "llm_latency", "tts_latency", 
-        "total_latency", "highest_latency"
+        "total_latency", "highest_latency",
+        "vad_total_latency", "vad_avg_chunk_latency"  # Added these two fields
     ]
     file_exists = os.path.isfile(filename)
     
@@ -272,6 +274,8 @@ def write_to_csv(data, filename="voice_assistant_log.csv"):
     except Exception as e:
         logging.error(f"Error writing to CSV: {e}")
 
+
+        
 def is_goodbye(text: str) -> bool:
     goodbye_phrases = [
         "مع السلامة", "وداعا", "باي", "سلام", "تصبح على خير", "إلى اللقاء",
