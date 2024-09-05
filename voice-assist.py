@@ -48,7 +48,7 @@ logging.info("ElevenLabs client initialized")
 
 logging.info("Setting up constants...")
 HUGGINGFACE_API_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN")
-HUGGINGFACE_ENDPOINT = "https://h81g3j4dmqhchvv2.us-east-1.aws.endpoints.huggingface.cloud"
+HUGGINGFACE_ENDPOINT = "https://ij61td5htdm77as6.us-east-1.aws.endpoints.huggingface.cloud"
 ELEVENLABS_VOICE_ID = "Xb7hH8MSUJpSbSDYk0k2"
 SAMPLE_RATE = 16000
 CHANNELS = 1
@@ -221,7 +221,7 @@ def text_to_speech(text: str) -> IO[bytes]:
             #language_code='ar',
             model_id="eleven_turbo_v2_5",
             voice_settings=VoiceSettings(
-                stability=0.5,
+                stability=0.7,
                 similarity_boost=1.0,
                 style=0.0,
                 use_speaker_boost=True,
